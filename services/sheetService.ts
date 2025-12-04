@@ -59,6 +59,112 @@ export const setRawMaterialRate = (rate: number) => {
 };
 
 // ============================================================================
+// THEME MANAGEMENT
+// ============================================================================
+
+export interface ThemeDefinition {
+    id: string;
+    label: string;
+    colors: Record<string, string>;
+}
+
+export const THEMES: Record<string, ThemeDefinition> = {
+    mushroom: {
+        id: 'mushroom',
+        label: 'Mushroom Earth',
+        colors: {
+            '--earth-50': '#fafaf9',
+            '--earth-100': '#f5f5f4',
+            '--earth-200': '#e7e5e4',
+            '--earth-300': '#d6d3d1',
+            '--earth-400': '#a8a29e',
+            '--earth-500': '#78716c',
+            '--earth-600': '#57534e',
+            '--earth-700': '#44403c',
+            '--earth-800': '#292524',
+            '--earth-900': '#1c1917',
+            '--nature-50': '#f0fdf4',
+            '--nature-100': '#dcfce7',
+            '--nature-200': '#bbf7d0',
+            '--nature-300': '#86efac',
+            '--nature-400': '#4ade80',
+            '--nature-500': '#22c55e',
+            '--nature-600': '#16a34a',
+            '--nature-700': '#15803d',
+            '--nature-800': '#166534',
+            '--nature-900': '#14532d'
+        }
+    },
+    ocean: {
+        id: 'ocean',
+        label: 'Ocean Breeze',
+        colors: {
+            '--earth-50': '#f0f9ff',
+            '--earth-100': '#e0f2fe',
+            '--earth-200': '#bae6fd',
+            '--earth-300': '#7dd3fc',
+            '--earth-400': '#38bdf8',
+            '--earth-500': '#0ea5e9',
+            '--earth-600': '#0284c7',
+            '--earth-700': '#0369a1',
+            '--earth-800': '#075985',
+            '--earth-900': '#0c4a6e',
+            '--nature-50': '#f5f3ff',
+            '--nature-100': '#ede9fe',
+            '--nature-200': '#ddd6fe',
+            '--nature-300': '#c4b5fd',
+            '--nature-400': '#a78bfa',
+            '--nature-500': '#8b5cf6',
+            '--nature-600': '#7c3aed',
+            '--nature-700': '#6d28d9',
+            '--nature-800': '#5b21b6',
+            '--nature-900': '#4c1d95'
+        }
+    },
+    forest: {
+        id: 'forest',
+        label: 'Deep Forest',
+        colors: {
+            '--earth-50': '#f0fdf4',
+            '--earth-100': '#dcfce7',
+            '--earth-200': '#bbf7d0',
+            '--earth-300': '#86efac',
+            '--earth-400': '#4ade80',
+            '--earth-500': '#22c55e',
+            '--earth-600': '#16a34a',
+            '--earth-700': '#15803d',
+            '--earth-800': '#166534',
+            '--earth-900': '#14532d',
+            '--nature-50': '#ecfdf5',
+            '--nature-100': '#d1fae5',
+            '--nature-200': '#a7f3d0',
+            '--nature-300': '#6ee7b7',
+            '--nature-400': '#34d399',
+            '--nature-500': '#10b981',
+            '--nature-600': '#059669',
+            '--nature-700': '#047857',
+            '--nature-800': '#065f46',
+            '--nature-900': '#064e3b'
+        }
+    }
+};
+
+export const getTheme = (): string => {
+    return localStorage.getItem(STORAGE_KEY_THEME) || 'mushroom';
+};
+
+export const applyTheme = (themeId: string) => {
+    const theme = THEMES[themeId] || THEMES['mushroom'];
+    localStorage.setItem(STORAGE_KEY_THEME, themeId);
+    
+    // Apply CSS Variables
+    const root = document.documentElement;
+    Object.entries(theme.colors).forEach(([key, value]) => {
+        root.style.setProperty(key, value);
+    });
+};
+
+// ============================================================================
 // FIRESTORE HELPERS
 // ============================================================================
 
@@ -218,70 +324,6 @@ export const deleteRecipe = async (id: string): Promise<boolean> => {
         console.error("Error deleting recipe:", e);
         return false;
     }
-};
-
-// ============================================================================
-// THEME MANAGEMENT
-// ============================================================================
-
-export const THEMES = {
-  mushroom: {
-    id: 'mushroom',
-    label: 'Pastel Mushroom (Default)',
-    colors: {
-      '--earth-50': '#faf7f5', '--earth-100': '#efe6e1', '--earth-200': '#e0cec5',
-      '--earth-300': '#d1b6aa', '--earth-400': '#c29f90', '--earth-500': '#b0897a',
-      '--earth-600': '#947164', '--earth-700': '#785a4f', '--earth-800': '#654d45', '--earth-900': '#4a3631',
-      '--nature-50': '#f2fbf7', '--nature-100': '#ddf4e8', '--nature-500': '#8ebfa6',
-      '--nature-600': '#6da388', '--nature-700': '#4f8269', '--nature-800': '#39634e', '--nature-900': '#234234'
-    }
-  },
-  ocean: {
-    id: 'ocean',
-    label: 'Pastel Ocean',
-    colors: {
-      '--earth-50': '#f4f8fa', '--earth-100': '#e0ecf2', '--earth-200': '#c8dce6',
-      '--earth-300': '#acc9d9', '--earth-400': '#90b4cc', '--earth-500': '#779cbf',
-      '--earth-600': '#5d7fa1', '--earth-700': '#466382', '--earth-800': '#314963', '--earth-900': '#1e3045',
-      '--nature-50': '#f0faff', '--nature-100': '#dcf2fe', '--nature-500': '#7ccbf7',
-      '--nature-600': '#56ade0', '--nature-700': '#3d8fc2', '--nature-800': '#2973a3', '--nature-900': '#195885'
-    }
-  },
-  midnight: {
-    id: 'midnight',
-    label: 'Soft Lavender',
-    colors: {
-      '--earth-50': '#faf7fc', '--earth-100': '#f2e8f7', '--earth-200': '#e6d3f0',
-      '--earth-300': '#d7bbe6', '--earth-400': '#c5a1db', '--earth-500': '#b187cf',
-      '--earth-600': '#9a6eb8', '--earth-700': '#8356a1', '--earth-800': '#6c408a', '--earth-900': '#552c73',
-      '--nature-50': '#fdf2fa', '--nature-100': '#fae3f5', '--nature-500': '#e89edb',
-      '--nature-600': '#d17bc2', '--nature-700': '#b85aa8', '--nature-800': '#9e3d8f', '--nature-900': '#852475'
-    }
-  },
-  forest: {
-    id: 'forest',
-    label: 'Deep Forest (Classic)',
-    colors: {
-      '--earth-50': '#fdf8f6', '--earth-100': '#f2e8e5', '--earth-200': '#eaddd7',
-      '--earth-300': '#e0cec7', '--earth-400': '#d2bab0', '--earth-500': '#a18072',
-      '--earth-600': '#8a6a5d', '--earth-700': '#73574d', '--earth-800': '#5d463e', '--earth-900': '#483630',
-      '--nature-50': '#f0fdf4', '--nature-100': '#dcfce7', '--nature-500': '#22c55e',
-      '--nature-600': '#16a34a', '--nature-700': '#15803d', '--nature-800': '#166534', '--nature-900': '#14532d'
-    }
-  }
-};
-
-export const getTheme = (): string => {
-  return localStorage.getItem(STORAGE_KEY_THEME) || 'mushroom';
-};
-
-export const applyTheme = (themeId: string) => {
-  const theme = THEMES[themeId as keyof typeof THEMES] || THEMES.mushroom;
-  const root = document.documentElement;
-  Object.entries(theme.colors).forEach(([key, value]) => {
-    root.style.setProperty(key, value);
-  });
-  localStorage.setItem(STORAGE_KEY_THEME, themeId);
 };
 
 // ============================================================================
@@ -1098,7 +1140,8 @@ export const getCustomerStats = async (customerId: string) => {
     // Determine Favorite Product
     const productCount: Record<string, number> = {};
     customerSales.flatMap(s => s.items).forEach(i => {
-        productCount[i.recipeName] = (productCount[i.recipeName] || 0) + i.quantity;
+        const name = i.recipeName || 'Unknown';
+        productCount[name] = (productCount[name] || 0) + i.quantity;
     });
     
     // Sort products by qty
@@ -1216,6 +1259,8 @@ export const createSale = async (
 export const submitOnlineOrder = async (
   customerName: string,
   customerPhone: string,
+  customerEmail: string, // New Param
+  customerAddress: string, // New Param
   cartItems: { item: FinishedGood, qty: number }[]
 ): Promise<ApiResponse<string>> => {
     
@@ -1230,6 +1275,9 @@ export const submitOnlineOrder = async (
         customerId: 'GUEST',
         customerName: customerName,
         customerPhone: customerPhone,
+        customerEmail: customerEmail,
+        // @ts-ignore - Assuming shippingAddress isn't in main type yet, but we'll save it
+        shippingAddress: customerAddress, 
         items: cartItems.map(c => ({
             finishedGoodId: c.item.id,
             recipeName: c.item.recipeName,
@@ -1275,7 +1323,34 @@ export const updateSaleStatus = async (saleId: string, status: SalesStatus): Pro
       }
   }
 
-  if (!saleData || index === -1) return { success: false, message: "Sale not found" };
+  if (!saleData || index === -1) return { success: false, message: "Sale not found in local cache" };
+
+  // --- AUTOMATIC CRM REGISTRATION (UPDATED) ---
+  if (saleData.customerId === 'GUEST' && status === 'INVOICED' && saleData.customerPhone) {
+      if (mockCustomers.length === 0) await getCustomers();
+      
+      // Check duplicate by phone
+      let existingCustomer = mockCustomers.find(c => c.contact === saleData!.customerPhone);
+      
+      if (!existingCustomer) {
+          console.log("🆕 Registering new B2C Customer from Shop Order...");
+          const newCustomer: Customer = {
+              id: `cust-${Date.now()}`,
+              name: saleData.customerName,
+              contact: saleData.customerPhone || '',
+              email: saleData.customerEmail || '', // Now capturing email
+              address: (saleData as any).shippingAddress || 'Online Order', // Now capturing address
+              type: 'B2C', 
+              status: 'ACTIVE',
+              joinDate: new Date().toISOString()
+          };
+          await addCustomer(newCustomer);
+          existingCustomer = newCustomer;
+      }
+      
+      // Link the Sale to the new Customer ID
+      saleData.customerId = existingCustomer.id;
+  }
 
   // STOCK DEDUCTION LOGIC: Only deduct when moving from QUOTATION to INVOICED
   if (saleData.status === 'QUOTATION' && status === 'INVOICED') {
@@ -1310,7 +1385,8 @@ export const updateSaleStatus = async (saleId: string, status: SalesStatus): Pro
 
   // UPDATE STATUS
   mockSales[index].status = status;
-  const updates: any = { status };
+  // Include customerId update in case we registered them
+  const updates: any = { status, customerId: saleData.customerId }; 
   
   if ((status === 'DELIVERED' || status === 'SHIPPED') && !mockSales[index].dateDelivered) {
       const dateStr = new Date().toISOString();

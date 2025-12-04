@@ -1,76 +1,84 @@
-
 import React, { useState, useEffect } from 'react';
-import { getFinishedGoods, submitOnlineOrder } from '../services/sheetService';
-import { FinishedGood } from '../types';
-import { ShoppingCart, Plus, Minus, ShoppingBag, X, CheckCircle, Store, ExternalLink, RefreshCw } from 'lucide-react';
+import { getFinishedGoods, submitOnlineOrder, getRecipes } from '../services/sheetService';
+import { FinishedGood, Recipe } from '../types';
+import { ShoppingCart, Plus, Minus, ShoppingBag, X, CheckCircle, Store, ExternalLink, Info, Loader2 } from 'lucide-react';
 
 export default function ShopPage() {
   const [goods, setGoods] = useState<FinishedGood[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [cart, setCart] = useState<{item: FinishedGood, qty: number}[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   
+  // Product Detail Modal State
+  const [selectedProduct, setSelectedProduct] = useState<FinishedGood | null>(null);
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  
   // Checkout Form
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     loadInventory();
-    
-    // Auto-refresh inventory every 30 seconds to keep it "Live"
-    const interval = setInterval(loadInventory, 30000);
+    const interval = setInterval(loadInventory, 30000); // Live refresh
     return () => clearInterval(interval);
   }, []);
 
   const loadInventory = async () => {
     try {
-        // This fetches PUBLIC data (allowed by new rules)
-        const res = await getFinishedGoods(true); 
-        if (res.success && res.data) {
-            // 1. FILTER: Only show items with stock
-            const activeStock = res.data.filter(g => g.quantity > 0);
+        const [goodsRes, recipesRes] = await Promise.all([
+            getFinishedGoods(true),
+            getRecipes() // Fetch recipes for descriptions
+        ]);
 
-            // 2. AGGREGATE: Group separate batches into single products
-            // This fixes the "Duplicate" issue
+        if (goodsRes.success && goodsRes.data) {
+            const activeStock = goodsRes.data.filter(g => g.quantity > 0);
+            // Group logic to merge duplicate batches
             const grouped = activeStock.reduce((acc, curr) => {
                 const key = `${curr.recipeName}|${curr.packagingType}`;
                 if (!acc[key]) {
-                    // First time seeing this product: clone it
                     acc[key] = { ...curr };
                 } else {
-                    // Already seen: just add the quantity to the existing card
                     acc[key].quantity += curr.quantity;
                 }
                 return acc;
             }, {} as Record<string, FinishedGood>);
-
             setGoods(Object.values(grouped));
         }
+        
+        if (recipesRes) setRecipes(recipesRes);
     } catch (error) {
-        console.error("Failed to load shop inventory:", error);
+        console.error("Failed to load inventory:", error);
     } finally {
         setLoading(false);
     }
   };
 
+  const handleProductClick = (product: FinishedGood) => {
+      // Find matching recipe to show ingredients/notes
+      const recipe = recipes.find(r => r.name === product.recipeName);
+      setSelectedProduct(product);
+      setSelectedRecipe(recipe || null);
+  };
+
   const addToCart = (product: FinishedGood) => {
     setCart(prev => {
-        // Find if we already have this PRODUCT (ignoring batch ID, matching by recipe/packaging)
         const existing = prev.find(p => p.item.recipeName === product.recipeName && p.item.packagingType === product.packagingType);
-        
         if (existing) {
-            // Don't let them buy more than TOTAL available stock
             const newQty = Math.min(existing.qty + 1, product.quantity);
-            return prev.map(p => (p.item.recipeName === product.recipeName && p.item.packagingType === product.packagingType) ? { ...p, qty: newQty } : p);
+            return prev.map(p => p.item.id === existing.item.id ? { ...p, qty: newQty } : p);
         }
         return [...prev, { item: product, qty: 1 }];
     });
     setIsCartOpen(true);
+    setSelectedProduct(null); // Close modal
   };
 
-  const removeFromCart = (recipeName: string, packagingType: string) => {
-      setCart(prev => prev.filter(p => !(p.item.recipeName === recipeName && p.item.packagingType === packagingType)));
+  const removeFromCart = (id: string) => {
+      setCart(prev => prev.filter(p => p.item.id !== id));
   };
 
   const cartTotal = cart.reduce((sum, c) => sum + (c.item.sellingPrice * c.qty), 0);
@@ -79,7 +87,7 @@ export default function ShopPage() {
       e.preventDefault();
       if (cart.length === 0) return;
       
-      const res = await submitOnlineOrder(name, phone, cart);
+      const res = await submitOnlineOrder(name, phone, email, address, cart);
       
       if (res.success) {
           const orderText = cart.map(c => `- ${c.qty}x ${c.item.recipeName} (${c.item.packagingType})`).join('%0a');
@@ -98,12 +106,10 @@ export default function ShopPage() {
           <div className="min-h-screen bg-green-50 flex flex-col items-center justify-center p-6 text-center animate-in zoom-in">
               <CheckCircle size={64} className="text-green-600 mb-4" />
               <h1 className="text-3xl font-bold text-green-900 mb-2">Order Recorded!</h1>
-              <p className="text-green-700 mb-6 max-w-md">Your order has been saved in our system. Please click below to send the confirmation via WhatsApp to arrange payment.</p>
-              
+              <p className="text-green-700 mb-6 max-w-md">Your order has been saved in our system. Please verify via WhatsApp to complete payment.</p>
               <a href={orderSuccess} target="_blank" rel="noreferrer" className="px-8 py-4 bg-green-600 text-white rounded-xl font-bold shadow-lg hover:bg-green-700 flex items-center transform hover:scale-105 transition-all">
                   <ExternalLink className="mr-2" /> Send to WhatsApp
               </a>
-              
               <button onClick={() => window.location.reload()} className="mt-8 text-green-600 underline text-sm">Back to Shop</button>
           </div>
       );
@@ -111,7 +117,6 @@ export default function ShopPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
-      {/* HEADER */}
       <header className="bg-white sticky top-0 z-30 shadow-sm border-b border-slate-100">
           <div className="max-w-6xl mx-auto px-4 h-16 flex justify-between items-center">
               <div className="flex items-center text-earth-800">
@@ -132,20 +137,22 @@ export default function ShopPage() {
           </div>
       </header>
 
-      {/* HERO */}
       <div className="bg-earth-800 text-white py-12 px-4 text-center">
           <h2 className="text-3xl font-bold mb-2">Organic Mushrooms & Products</h2>
           <p className="opacity-80">Direct from our community growers to your table.</p>
       </div>
 
-      {/* PRODUCT GRID */}
       <main className="max-w-6xl mx-auto px-4 py-8">
           {loading ? (
               <div className="text-center py-20 text-slate-400">Loading fresh produce...</div>
           ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                   {goods.map((product, index) => (
-                      <div key={index} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-shadow group">
+                      <div 
+                        key={index} 
+                        className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-shadow group cursor-pointer"
+                        onClick={() => handleProductClick(product)}
+                      >
                           <div className="h-48 bg-slate-200 relative overflow-hidden">
                               {product.imageUrl ? (
                                   <img src={product.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={product.recipeName} />
@@ -154,6 +161,9 @@ export default function ShopPage() {
                               )}
                               <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded text-xs font-bold text-slate-700 shadow-sm">
                                   {product.quantity} left
+                              </div>
+                              <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded font-bold uppercase backdrop-blur-sm flex items-center">
+                                  <Info size={10} className="mr-1"/> Details
                               </div>
                           </div>
                           <div className="p-5">
@@ -164,7 +174,7 @@ export default function ShopPage() {
                               <div className="flex justify-between items-center">
                                   <span className="text-xl font-black text-green-700">RM {product.sellingPrice.toFixed(2)}</span>
                                   <button 
-                                    onClick={() => addToCart(product)}
+                                    onClick={(e) => { e.stopPropagation(); addToCart(product); }}
                                     className="bg-earth-800 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-earth-900 transition-colors shadow-sm"
                                   >
                                       Add to Cart
@@ -182,6 +192,56 @@ export default function ShopPage() {
           )}
       </main>
 
+      {/* PRODUCT DETAIL MODAL */}
+      {selectedProduct && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden relative flex flex-col max-h-[90vh]">
+                  <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 z-10 p-2 bg-white/80 hover:bg-white rounded-full shadow-sm"><X size={20}/></button>
+                  
+                  <div className="h-64 bg-slate-200 relative">
+                      {selectedProduct.imageUrl ? (
+                          <img src={selectedProduct.imageUrl} className="w-full h-full object-cover" />
+                      ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-400"><Store size={48}/></div>
+                      )}
+                  </div>
+                  
+                  <div className="p-6 overflow-y-auto">
+                      <div className="flex justify-between items-start mb-4">
+                          <div>
+                              <h2 className="text-2xl font-bold text-slate-800">{selectedProduct.recipeName}</h2>
+                              <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs font-bold uppercase rounded mt-1 inline-block">{selectedProduct.packagingType}</span>
+                          </div>
+                          <span className="text-2xl font-black text-green-700">RM {selectedProduct.sellingPrice.toFixed(2)}</span>
+                      </div>
+
+                      {selectedRecipe ? (
+                          <div className="space-y-4">
+                              <div className="bg-earth-50 p-4 rounded-xl border border-earth-100">
+                                  <h4 className="text-xs font-bold text-earth-800 uppercase tracking-wide mb-2 flex items-center"><Info size={14} className="mr-1"/> About this Product</h4>
+                                  <p className="text-slate-700 text-sm leading-relaxed">{selectedRecipe.notes || "Freshly harvested and packed with care."}</p>
+                              </div>
+                              
+                              {/* Assuming Recipe type might have ingredients in future or checking if notes contain it */}
+                              {/* Just showing notes for now based on current Type definition */}
+                          </div>
+                      ) : (
+                          <p className="text-slate-400 text-sm italic">Standard produce. No specific recipe details available.</p>
+                      )}
+                  </div>
+
+                  <div className="p-4 border-t bg-slate-50">
+                      <button 
+                          onClick={() => addToCart(selectedProduct)}
+                          className="w-full py-4 bg-earth-800 text-white rounded-xl font-bold text-lg hover:bg-earth-900 transition-all shadow-lg flex items-center justify-center"
+                      >
+                          <ShoppingCart className="mr-2"/> Add to Cart
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* CART DRAWER */}
       {isCartOpen && (
           <div className="fixed inset-0 z-50 flex justify-end">
@@ -197,7 +257,7 @@ export default function ShopPage() {
                           <div className="text-center text-slate-400 py-10">Your basket is empty.</div>
                       ) : (
                           cart.map((item, i) => (
-                              <div key={i} className="flex gap-4">
+                              <div key={i} className="flex gap-4 border-b border-slate-50 pb-4 last:border-0">
                                   <div className="w-20 h-20 bg-slate-100 rounded-lg overflow-hidden flex-shrink-0">
                                       {item.item.imageUrl && <img src={item.item.imageUrl} className="w-full h-full object-cover"/>}
                                   </div>
@@ -207,7 +267,7 @@ export default function ShopPage() {
                                       <div className="flex justify-between items-center">
                                           <p className="font-bold text-green-700">RM {(item.item.sellingPrice * item.qty).toFixed(2)}</p>
                                           <div className="flex items-center bg-slate-100 rounded-lg">
-                                              <button onClick={() => removeFromCart(item.item.recipeName, item.item.packagingType)} className="p-1 px-2 text-slate-500 hover:text-red-500"><X size={14}/></button>
+                                              <button onClick={() => removeFromCart(item.item.id)} className="p-1 px-2 text-slate-500 hover:text-red-500"><X size={14}/></button>
                                               <span className="px-2 text-sm font-bold">{item.qty}</span>
                                           </div>
                                       </div>
@@ -227,6 +287,9 @@ export default function ShopPage() {
                           <form onSubmit={handleSubmitOrder} className="space-y-3">
                               <input required placeholder="Your Name" className="w-full p-3 border rounded-xl" value={name} onChange={e => setName(e.target.value)} />
                               <input required placeholder="WhatsApp Number" className="w-full p-3 border rounded-xl" value={phone} onChange={e => setPhone(e.target.value)} />
+                              <input required type="email" placeholder="Email Address" className="w-full p-3 border rounded-xl" value={email} onChange={e => setEmail(e.target.value)} />
+                              <textarea required placeholder="Delivery Address" className="w-full p-3 border rounded-xl" value={address} onChange={e => setAddress(e.target.value)} rows={2} />
+                              
                               <button className="w-full py-4 bg-green-600 text-white font-bold rounded-xl shadow-lg hover:bg-green-700 hover:shadow-xl transition-all">
                                   Confirm Order
                               </button>
