@@ -1,6 +1,6 @@
 import { MushroomBatch, BatchStatus, ApiResponse, InventoryItem, PurchaseOrder, SalesRecord, Customer, FinishedGood, SalesStatus, PaymentMethod, DailyCostMetrics, Supplier, Recipe, UserRole, Budget } from '../types';
 import { db, auth, storage } from './firebase';
-import firebase from 'firebase/app';
+import firebase from 'firebase/compat/app';
 
 // ============================================================================
 // CONFIGURATION MANAGEMENT

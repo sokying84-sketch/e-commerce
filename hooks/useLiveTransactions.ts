@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { db } from "../services/firebase";
-import firebase from "firebase/app";
+import firebase from "firebase/compat/app";
 
 export const useLiveTransactions = () => {
   const [transactions, setTransactions] = useState<any[]>([]);
