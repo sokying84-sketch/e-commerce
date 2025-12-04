@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { auth, db } from '../services/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
 import { Leaf } from 'lucide-react';
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
@@ -18,15 +16,17 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
     
     try {
       if (isSignUp) {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        const cred = await auth.createUserWithEmailAndPassword(email, password);
         // Default role is GUEST. Admin must change this in Firebase Console.
-        await setDoc(doc(db, 'user_roles', cred.user.uid), {
-          role: 'GUEST', 
-          email: email
-        });
+        if (cred.user) {
+            await db.collection('user_roles').doc(cred.user.uid).set({
+                role: 'GUEST', 
+                email: email
+            });
+        }
         alert("Account created! Please ask Admin to assign your role (PROCESSING, SALES, or ADMIN).");
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        await auth.signInWithEmailAndPassword(email, password);
       }
       onLogin(); 
     } catch (err: any) {

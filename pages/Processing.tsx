@@ -1,10 +1,8 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchBatches, updateBatchStatus, getRecipes, saveRecipe, deleteRecipe } from '../services/sheetService';
 import { MushroomBatch, BatchStatus, Recipe, ProcessConfig } from '../types';
 import { ThermometerSun, CheckCircle, Clock, Play, RotateCcw, Utensils, BookOpen, Plus, Trash2, ChefHat, Flame, Image as ImageIcon, X, Waves, Wind, ShieldAlert, Upload, Pencil, FastForward, AlertTriangle, RefreshCw, CopyMinus, Scale, ArrowRight, LayoutGrid, Cloud, WifiOff } from 'lucide-react';
 import { auth } from '../services/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
 
 // EMPTIED DEFAULT RECIPES AS REQUESTED
 const DEFAULT_RECIPES: Recipe[] = [];
@@ -39,7 +37,7 @@ const useRecipes = () => {
 
   useEffect(() => {
     // Listen for Auth State changes to ensure we have a user before fetching
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
         if (user) {
             console.log("✅ Processing Floor: Connected to Cloud DB as", user.uid);
             setIsCloud(true);

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useMemo } from 'react';
 import { 
     getFinishedGoods, getInventory, getPurchaseOrders, createPurchaseOrder, 
@@ -62,10 +61,10 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
   const [editingCost, setEditingCost] = useState<DailyCostMetrics | null>(null);
   const [newSupplier, setNewSupplier] = useState({ name: '', address: '', contact: '', itemName: '', itemType: 'PACKAGING', itemSubtype: 'POUCH', packSize: 100, unitCost: 45 });
   
-  // UPDATED CUSTOMER FORM (Aligned with CRM)
+  // UPDATED CUSTOMER FORM
   const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({ name: '', email: '', contact: '', address: '', type: 'B2C', status: 'ACTIVE' });
   
-  // SALES FORM (Updated for Cart)
+  // SALES FORM
   const [salesCustomer, setSalesCustomer] = useState('');
   const [salesGood, setSalesGood] = useState('');
   const [salesQty, setSalesQty] = useState('1');
@@ -82,9 +81,13 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
     setLaborRateState(getLaborRate());
     setRawRateState(getRawMaterialRate());
     
-    const [inv, po, sup, cust, goods, s, costs, rev] = await Promise.all([
+    // Explicitly fetching fresh sales to ensure sync
+    const s = await getSales(true); 
+    if (s.success) setSales(s.data || []);
+
+    const [inv, po, sup, cust, goods, costs, rev] = await Promise.all([
         getInventory(), getPurchaseOrders(), getSuppliers(), getCustomers(), 
-        getFinishedGoods(), getSales(), getDailyProductionCosts(), getWeeklyRevenue()
+        getFinishedGoods(), getDailyProductionCosts(), getWeeklyRevenue()
     ]);
     
     if (inv.success) setInventory(inv.data || []);
@@ -92,7 +95,7 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
     if (sup.success) setSuppliers(sup.data || []);
     if (cust.success) setCustomers(cust.data || []);
     if (goods.success) setFinishedGoods(goods.data || []);
-    if (s.success) setSales(s.data || []);
+    // Sales already set above
     if (costs.success) setDailyCosts(costs.data || []);
     setWeeklyRevenue(rev);
 
@@ -126,14 +129,10 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
       const map = new Map<string, DailyCostMetrics>();
       
       dailyCosts.forEach(cost => {
-          // Create a composite key: Date + Batch ID
           const key = `${cost.date}|${cost.referenceId}`;
-          
           if (!map.has(key)) {
-              // Clone the first entry to start the group
               map.set(key, { ...cost });
           } else {
-              // Aggregate values
               const existing = map.get(key)!;
               existing.weightProcessed += cost.weightProcessed || 0;
               existing.processingHours += cost.processingHours || 0;
@@ -150,7 +149,6 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
 
   // --- ACTIONS ---
   
-  // NEW: Add to Cart Logic
   const handleAddToCart = () => {
       if (!salesGood) return;
       const product = availableGoods[salesGood];
@@ -160,36 +158,25 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
       if (qty <= 0) return;
 
       setSalesCart(prev => {
-          // Check if item exists in cart, update if so
           const existing = prev.find(item => item.id === product.id);
           if (existing) {
               return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + qty } : item);
           }
           return [...prev, { id: product.id, label: product.label, qty, price: parseFloat(salesPrice) }];
       });
-      
-      // Reset input
-      setSalesGood('');
-      setSalesQty('1');
+      setSalesGood(''); setSalesQty('1');
   };
 
   const handleRemoveFromCart = (index: number) => {
       setSalesCart(prev => prev.filter((_, i) => i !== index));
   };
 
-  // UPDATED: Create Document from Cart
   const handleCreateDocument = async (e: React.FormEvent, initialStatus: 'QUOTATION' | 'INVOICED') => {
     e.preventDefault();
     if (salesCart.length === 0) { alert("Cart is empty!"); return; }
     if (!salesCustomer) { alert("Please select a customer."); return; }
 
-    // Map cart items to the format expected by updated createSale
-    const itemsToSell = salesCart.map(item => ({
-        finishedGoodId: item.id,
-        quantity: item.qty,
-        unitPrice: item.price
-    }));
-
+    const itemsToSell = salesCart.map(item => ({ finishedGoodId: item.id, quantity: item.qty, unitPrice: item.price }));
     const res = await createSale(salesCustomer, itemsToSell, salesPayment);
     
     if (res.success && res.data) {
@@ -201,14 +188,11 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
             setViewDocType('INVOICE');
         }
         setSelectedSale(res.data);
-        setSalesCart([]); // Clear cart
+        setSalesCart([]);
         refreshData();
-    } else {
-        alert(res.message);
-    }
+    } else { alert(res.message); }
   };
 
-  // UPDATED: Add Customer with Type & Status
   const handleAddCustomer = async (e: React.FormEvent) => { 
       e.preventDefault(); 
       await addCustomer({ 
@@ -222,11 +206,11 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
           joinDate: new Date().toISOString()
       } as Customer); 
       setShowCustomerModal(false); 
-      setNewCustomer({ name: '', email: '', contact: '', address: '', type: 'B2C' }); // Reset
+      setNewCustomer({ name: '', email: '', contact: '', address: '', type: 'B2C' });
       refreshData(); 
   };
 
-  // ADD SUPPLIER MODAL LOGIC
+  // RESTORED: Add Supplier Logic
   const handleAddSupplier = async (e: React.FormEvent) => {
       e.preventDefault();
       const supRes = await addSupplier({ id: `sup-${Date.now()}`, name: newSupplier.name, address: newSupplier.address, contact: newSupplier.contact });
@@ -252,32 +236,56 @@ const FinancePage: React.FC<FinanceProps> = ({ allowedTabs = ['procurement', 'sa
       }
   };
 
-  // ... (Other handlers kept same) ...
   const handleSaveBudget = async (e: React.FormEvent) => {
       e.preventDefault();
       const currentMonth = new Date().toISOString().slice(0, 7);
       await setMonthlyBudget({ id: currentMonth, month: currentMonth, targetRevenue: parseFloat(targetRevenue) || 0, targetProfit: parseFloat(targetProfit) || 0, maxWastageKg: 50 });
       setShowBudgetForm(false); refreshData();
   };
+
   const handleUpdateStatus = async (sale: SalesRecord, newStatus: string) => {
-      if (newStatus === 'INVOICED' && !window.confirm("Convert Quotation to Invoice?")) return;
+      if (newStatus === 'INVOICED' && !window.confirm("Confirm order? Stock will be deducted.")) return;
+      
       setUpdatingId(sale.id);
+      
       try {
           const res = await updateSaleStatus(sale.id, newStatus as SalesStatus);
+          
           if (res.success && res.data) {
-              await refreshData(); setSelectedSale(res.data);
+              // 1. Locally update the sales list immediately to prevent UI lag/duplication
+              setSales(prevSales => 
+                  prevSales.map(s => s.id === sale.id ? { ...s, status: newStatus as SalesStatus } : s)
+              );
+              
+              // 2. Set selected sale for view if needed
+              if (selectedSale && selectedSale.id === sale.id) {
+                  setSelectedSale({ ...selectedSale, status: newStatus as SalesStatus });
+              }
+
+              // 3. Update Document View Type
               if (newStatus === 'INVOICED') setViewDocType('INVOICE');
               if (newStatus === 'SHIPPED') setViewDocType('DO');
               if (newStatus === 'PAID') setViewDocType('RECEIPT');
+              
+              // 4. Background Refresh (Optional, but good for consistency)
+              refreshData();
+          } else {
+              alert("Update failed: " + res.message);
           }
-      } finally { setUpdatingId(null); }
+      } catch (e: any) {
+          alert("Error: " + e.message);
+      } finally { 
+          setUpdatingId(null); 
+      }
   };
+
   const handleSaveCostEdit = async (e: React.FormEvent) => { e.preventDefault(); if (editingCost && editingCost.id) { await updateDailyCost(editingCost.id, editingCost); setShowEditCostModal(false); setEditingCost(null); refreshData(); } };
   const handleCreatePO = async (e: React.FormEvent) => { e.preventDefault(); const item = inventory.find(i => i.id === poItem); if (!item) return; await createPurchaseOrder(item.id, parseInt(poQtyPackages), item.supplier || 'Generic'); setShowOrderModal(false); refreshData(); };
   
   const handleQC = async (passed: boolean) => { if (showQCModal) { if (passed) { await receivePurchaseOrder(showQCModal, true); setShowQCModal(null); } else { setShowComplaintModal(showQCModal); setShowQCModal(null); } refreshData(); } };
   const handleSubmitComplaint = async () => { if (showComplaintModal && complaintReason) { await complaintPurchaseOrder(showComplaintModal, complaintReason); setShowComplaintModal(null); setComplaintReason(''); refreshData(); } };
   const handleResolveComplaint = async (resolution: string) => { if (showResolutionModal) { await resolveComplaint(showResolutionModal, resolution); setShowResolutionModal(null); refreshData(); } };
+  
   const handleDeleteSupplier = async (id: string) => { if (window.confirm("Remove?")) { await deleteSupplier(id); refreshData(); } };
   const handlePrint = () => setTimeout(() => alert("Printing..."), 500);
   const handleOpenDocument = (sale: SalesRecord, type: DocumentType) => { setSelectedSale(sale); setViewDocType(type); };

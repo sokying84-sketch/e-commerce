@@ -1,7 +1,6 @@
 import { MushroomBatch, BatchStatus, ApiResponse, InventoryItem, PurchaseOrder, SalesRecord, Customer, FinishedGood, SalesStatus, PaymentMethod, DailyCostMetrics, Supplier, Recipe, UserRole, Budget } from '../types';
 import { db, auth, storage } from './firebase';
-import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import firebase from 'firebase/app';
 
 // ============================================================================
 // CONFIGURATION MANAGEMENT
@@ -71,13 +70,13 @@ const cleanFirestoreData = <T>(data: T): T => {
 // UPDATED FOR SHARED/COMPANY VIEW
 const getUserCollection = (collectionName: string) => {
   // Return root collection for shared data access
-  return collection(db, collectionName);
+  return db.collection(collectionName);
 };
 
 // UPDATED FOR SHARED/COMPANY VIEW
 const getUserDoc = (collectionName: string, docId: string) => {
   // Return root doc for shared data access
-  return doc(db, collectionName, docId);
+  return db.collection(collectionName).doc(docId);
 };
 
 // ============================================================================
@@ -88,10 +87,10 @@ export const getUserRole = async (): Promise<string> => {
   if (!user) return 'GUEST';
 
   try {
-    const docRef = doc(db, 'user_roles', user.uid);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return snap.data().role || 'GUEST';
+    const docRef = db.collection('user_roles').doc(user.uid);
+    const snap = await docRef.get();
+    if (snap.exists) {
+      return snap.data()?.role || 'GUEST';
     }
     return 'GUEST';
   } catch (error) {
@@ -109,10 +108,9 @@ export const uploadImage = async (file: File, path: string): Promise<string> => 
     
     try {
         // Create a unique reference: company_assets/path/timestamp_filename
-        // We use a shared path structure now
-        const storageRef = ref(storage, `company_assets/${path}/${Date.now()}_${file.name}`);
-        const snapshot = await uploadBytes(storageRef, file);
-        return await getDownloadURL(snapshot.ref);
+        const storageRef = storage.ref(`company_assets/${path}/${Date.now()}_${file.name}`);
+        const snapshot = await storageRef.put(file);
+        return await snapshot.ref.getDownloadURL();
     } catch (error: any) {
         console.error("Firebase Storage Error:", error);
         
@@ -145,7 +143,7 @@ export const getRecipes = async (): Promise<Recipe[]> => {
     const colRef = getUserCollection('recipes');
     if (colRef) {
         console.log("📚 Fetching recipes from Firestore (Shared)...");
-        const snap = await getDocs(colRef);
+        const snap = await colRef.get();
         console.log(`✅ Found ${snap.size} recipes in Firestore.`);
         return snap.docs.map(d => ({ id: d.id, ...d.data() } as Recipe));
     }
@@ -173,17 +171,19 @@ export const saveRecipe = async (recipe: Recipe, imageFile?: File): Promise<ApiR
         console.log(`💾 Saving recipe ${recipe.name} to Firestore (Shared)`);
         // Firestore Save
         // If ID exists and looks like a custom ID, update it. Otherwise create new in root collection.
-        const docRef = recipe.id.startsWith('r-') || recipe.id.startsWith('rec-') 
-            ? getUserDoc('recipes', recipe.id) 
-            : doc(collection(db, 'recipes')); 
+        let docRef;
+        if (recipe.id.startsWith('r-') || recipe.id.startsWith('rec-')) {
+            docRef = getUserDoc('recipes', recipe.id);
+        } else {
+            docRef = db.collection('recipes').doc();
+        }
             
-        // If it was a new doc creation via collection(), get id
         if (!docRef) return { success: false, message: "Auth Error" };
         
         // Ensure ID is set on data
         if (!recipeData.id) recipeData.id = docRef.id;
 
-        await setDoc(docRef, cleanFirestoreData(recipeData), { merge: true });
+        await docRef.set(cleanFirestoreData(recipeData), { merge: true });
         return { success: true, data: recipeData };
     } else {
         console.warn(`💾 Saving recipe ${recipe.name} to LocalStorage (User not authenticated)`);
@@ -206,7 +206,7 @@ export const deleteRecipe = async (id: string): Promise<boolean> => {
     try {
         const docRef = getUserDoc('recipes', id);
         if (docRef) {
-            await deleteDoc(docRef);
+            await docRef.delete();
             return true;
         }
         // Local fallback
@@ -340,8 +340,6 @@ let mockSales: SalesRecord[] = [];
 let mockDailyCosts: DailyCostMetrics[] = [];
 
 // READ-YOUR-WRITES BUFFER
-// Track when the last local write occurred. If very recent, prefer local cache over server data
-// to prevent "stale" reads causing UI flicker (e.g., inventory jumping back up after deduction).
 let lastWriteTime = 0;
 const WRITE_BUFFER_MS = 2000; // 2 seconds
 
@@ -376,7 +374,7 @@ const recordCostTransaction = async (
     // Sync to Firestore 'finance_log' (daily_costs)
     const docRef = getUserDoc('daily_costs', newTransaction.id || '');
     if (docRef) {
-        await setDoc(docRef, cleanFirestoreData(newTransaction));
+        await docRef.set(cleanFirestoreData(newTransaction));
     }
 };
 
@@ -448,7 +446,7 @@ export const fetchBatches = async (forceRemote = false): Promise<ApiResponse<Mus
   const colRef = getUserCollection('batches');
   if (colRef) {
       try {
-          const snapshot = await getDocs(colRef);
+          const snapshot = await colRef.get();
           const data = snapshot.docs.map(d => d.data() as MushroomBatch);
           // Sort by date received desc
           data.sort((a,b) => new Date(b.dateReceived).getTime() - new Date(a.dateReceived).getTime());
@@ -486,7 +484,7 @@ export const createBatch = async (
   // FIRESTORE SYNC: Receiving Log
   const docRef = getUserDoc('batches', newId);
   if (docRef) {
-      await setDoc(docRef, cleanFirestoreData(newBatch));
+      await docRef.set(cleanFirestoreData(newBatch));
   }
 
   // AUTO LOG: Raw Material Cost + Receiving Wastage
@@ -542,9 +540,7 @@ export const updateBatchStatus = async (
   // FIRESTORE SYNC: Processing Log
   const docRef = getUserDoc('batches', id);
   if (docRef) {
-      // Use cleanFirestoreData even for updates to be safe, though updateDoc handles partials better
-      // but undefined values still throw in updateDoc.
-      await updateDoc(docRef, cleanFirestoreData({ ...updates, status, remainingWeightKg: updatedBatch.remainingWeightKg }));
+      await docRef.update(cleanFirestoreData({ ...updates, status, remainingWeightKg: updatedBatch.remainingWeightKg }));
   }
 
   return { success: true, data: mockBatches[index] };
@@ -618,7 +614,7 @@ export const packBatchPartial = async (
   // Sync Batch Update to Firestore
   const batchDocRef = getUserDoc('batches', batch.id);
   if (batchDocRef) {
-      await updateDoc(batchDocRef, cleanFirestoreData({ remainingWeightKg: batch.remainingWeightKg, status: batch.status }));
+      await batchDocRef.update(cleanFirestoreData({ remainingWeightKg: batch.remainingWeightKg, status: batch.status }));
   }
 
   const newFinishedGood: FinishedGood = {
@@ -635,7 +631,7 @@ export const packBatchPartial = async (
   // Sync Finished Good to Firestore (Packing Log)
   const fgDocRef = getUserDoc('finished_goods', newFinishedGood.id);
   if (fgDocRef) {
-      await setDoc(fgDocRef, cleanFirestoreData(newFinishedGood));
+      await fgDocRef.set(cleanFirestoreData(newFinishedGood));
   }
 
   // INVENTORY DEDUCTION (SMART LOOP: FIND ALL MATCHING & CONSUME)
@@ -777,7 +773,7 @@ export const getFinishedGoods = async (forceRemote = false): Promise<ApiResponse
   }
 
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       const data = snap.docs.map(d => d.data() as FinishedGood);
       data.sort((a,b) => new Date(b.datePacked).getTime() - new Date(a.datePacked).getTime());
       mockFinishedGoods = data;
@@ -814,14 +810,12 @@ export const updateFinishedGoodImage = async (recipeName: string, packagingType:
   // 2. Sync to Firestore
   const user = auth.currentUser;
   if (user) {
-    const q = query(
-        // SHARED COLLECTION
-        collection(db, 'finished_goods'), 
-        where("recipeName", "==", recipeName),
-        where("packagingType", "==", packagingType)
-    );
-    const snap = await getDocs(q);
-    const updatePromises = snap.docs.map(d => updateDoc(d.ref, { imageUrl }));
+    const q = db.collection('finished_goods')
+        .where("recipeName", "==", recipeName)
+        .where("packagingType", "==", packagingType);
+    
+    const snap = await q.get();
+    const updatePromises = snap.docs.map(d => d.ref.update({ imageUrl }));
     await Promise.all(updatePromises);
   }
 
@@ -843,9 +837,12 @@ export const updateFinishedGoodPrice = async (recipeName: string, packagingType:
 
   // 2. Sync to Firestore
   try {
-      const q = query(collection(db, 'finished_goods'), where("recipeName", "==", recipeName), where("packagingType", "==", packagingType));
-      const snap = await getDocs(q);
-      const updatePromises = snap.docs.map(d => updateDoc(d.ref, { sellingPrice: price }));
+      const q = db.collection('finished_goods')
+        .where("recipeName", "==", recipeName)
+        .where("packagingType", "==", packagingType);
+
+      const snap = await q.get();
+      const updatePromises = snap.docs.map(d => d.ref.update({ sellingPrice: price }));
       await Promise.all(updatePromises);
       return { success: true, message: `Price updated for ${updatedCount} items` };
   } catch (e: any) {
@@ -867,7 +864,7 @@ export const getInventory = async (forceRemote = false): Promise<ApiResponse<Inv
 
   const colRef = getUserCollection('inventory');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       const data = snap.docs.map(d => d.data() as InventoryItem);
       mockInventory = data;
       return { success: true, data };
@@ -889,7 +886,7 @@ export const updateInventory = async (id: string, change: number, newCost?: numb
     const docRef = getUserDoc('inventory', id);
     if (docRef) {
         // Sanitize first
-        await setDoc(docRef, cleanFirestoreData(mockInventory[index])); 
+        await docRef.set(cleanFirestoreData(mockInventory[index])); 
     }
     
     return { success: true, data: mockInventory[index] };
@@ -903,7 +900,7 @@ export const addInventoryItem = async (item: InventoryItem): Promise<ApiResponse
       exists.supplier = item.supplier;
       // Sync update
       const docRef = getUserDoc('inventory', exists.id);
-      if (docRef) await setDoc(docRef, cleanFirestoreData(exists));
+      if (docRef) await docRef.set(cleanFirestoreData(exists));
       
       lastWriteTime = Date.now();
       return { success: true, data: exists };
@@ -912,7 +909,7 @@ export const addInventoryItem = async (item: InventoryItem): Promise<ApiResponse
   
   // Sync new
   const docRef = getUserDoc('inventory', item.id);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(item));
+  if (docRef) await docRef.set(cleanFirestoreData(item));
   
   lastWriteTime = Date.now();
   return { success: true, data: item };
@@ -922,7 +919,7 @@ export const deleteInventoryItem = async (id: string): Promise<ApiResponse<boole
   mockInventory = mockInventory.filter(i => i.id !== id);
   
   const docRef = getUserDoc('inventory', id);
-  if (docRef) await deleteDoc(docRef);
+  if (docRef) await docRef.delete();
   
   lastWriteTime = Date.now();
   return { success: true, message: "Item deleted" };
@@ -931,7 +928,7 @@ export const deleteInventoryItem = async (id: string): Promise<ApiResponse<boole
 export const getSuppliers = async (): Promise<ApiResponse<Supplier[]>> => {
   const colRef = getUserCollection('suppliers');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       mockSuppliers = snap.docs.map(d => d.data() as Supplier);
       return { success: true, data: mockSuppliers };
   }
@@ -941,7 +938,7 @@ export const getSuppliers = async (): Promise<ApiResponse<Supplier[]>> => {
 export const addSupplier = async (supplier: Supplier): Promise<ApiResponse<Supplier>> => {
   mockSuppliers.push(supplier);
   const docRef = getUserDoc('suppliers', supplier.id);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(supplier));
+  if (docRef) await docRef.set(cleanFirestoreData(supplier));
   return { success: true, data: supplier };
 };
 
@@ -949,14 +946,14 @@ export const deleteSupplier = async (id: string): Promise<ApiResponse<boolean>> 
   const initLen = mockSuppliers.length;
   mockSuppliers = mockSuppliers.filter(s => s.id !== id);
   const docRef = getUserDoc('suppliers', id);
-  if (docRef) await deleteDoc(docRef);
+  if (docRef) await docRef.delete();
   return { success: mockSuppliers.length < initLen, message: "Supplier removed" };
 };
 
 export const getPurchaseOrders = async (): Promise<ApiResponse<PurchaseOrder[]>> => {
   const colRef = getUserCollection('purchase_orders');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       const data = snap.docs.map(d => d.data() as PurchaseOrder);
       data.sort((a,b) => new Date(b.dateOrdered).getTime() - new Date(a.dateOrdered).getTime());
       mockPurchaseOrders = data;
@@ -988,7 +985,7 @@ export const createPurchaseOrder = async (itemId: string, qtyPackages: number, s
   mockPurchaseOrders.unshift(newPO);
   
   const docRef = getUserDoc('purchase_orders', newPO.id);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(newPO));
+  if (docRef) await docRef.set(cleanFirestoreData(newPO));
 
   return { success: true, data: newPO };
 };
@@ -1010,7 +1007,7 @@ export const receivePurchaseOrder = async (poId: string, qcPassed: boolean, note
   }
   
   const docRef = getUserDoc('purchase_orders', poId);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(mockPurchaseOrders[index]));
+  if (docRef) await docRef.set(cleanFirestoreData(mockPurchaseOrders[index]));
 
   return { success: true, data: mockPurchaseOrders[index] };
 };
@@ -1021,7 +1018,7 @@ export const complaintPurchaseOrder = async (poId: string, reason: string): Prom
   mockPurchaseOrders[index].complaintReason = reason;
 
   const docRef = getUserDoc('purchase_orders', poId);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(mockPurchaseOrders[index]));
+  if (docRef) await docRef.set(cleanFirestoreData(mockPurchaseOrders[index]));
 
   return { success: true, data: mockPurchaseOrders[index] };
 };
@@ -1039,7 +1036,7 @@ export const resolveComplaint = async (poId: string, resolution: string): Promis
   }
 
   const docRef = getUserDoc('purchase_orders', poId);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(po));
+  if (docRef) await docRef.set(cleanFirestoreData(po));
 
   return { success: true, data: mockPurchaseOrders[index] };
 };
@@ -1050,7 +1047,7 @@ export const resolveComplaint = async (poId: string, resolution: string): Promis
 export const getCustomers = async (): Promise<ApiResponse<Customer[]>> => {
   const colRef = getUserCollection('customers');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       mockCustomers = snap.docs.map(d => d.data() as Customer);
       return { success: true, data: mockCustomers };
   }
@@ -1060,7 +1057,7 @@ export const getCustomers = async (): Promise<ApiResponse<Customer[]>> => {
 export const addCustomer = async (customer: Customer): Promise<ApiResponse<Customer>> => {
   mockCustomers.push(customer);
   const docRef = getUserDoc('customers', customer.id);
-  if (docRef) await setDoc(docRef, cleanFirestoreData(customer));
+  if (docRef) await docRef.set(cleanFirestoreData(customer));
   return { success: true, data: customer };
 };
 
@@ -1076,7 +1073,7 @@ export const updateCustomer = async (id: string, updates: Partial<Customer>): Pr
         
         // Firestore Sync
         const docRef = getUserDoc('customers', id);
-        if (docRef) await setDoc(docRef, cleanFirestoreData(mockCustomers[index]), { merge: true });
+        if (docRef) await docRef.set(cleanFirestoreData(mockCustomers[index]), { merge: true });
         
         return true;
     }
@@ -1130,7 +1127,7 @@ export const getSales = async (forceRemote = false): Promise<ApiResponse<SalesRe
 
   const colRef = getUserCollection('sales');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       const data = snap.docs.map(d => d.data() as SalesRecord);
       data.sort((a,b) => new Date(b.dateCreated).getTime() - new Date(a.dateCreated).getTime());
       mockSales = data;
@@ -1173,7 +1170,7 @@ export const createSale = async (
           toDeduct -= take;
           
           const fgDoc = getUserDoc('finished_goods', stockBatch.id);
-          if (fgDoc) await updateDoc(fgDoc, { quantity: stockBatch.quantity });
+          if (fgDoc) await fgDoc.update({ quantity: stockBatch.quantity });
       }
 
       // Add to final record
@@ -1207,7 +1204,7 @@ export const createSale = async (
   lastWriteTime = Date.now();
 
   const saleDoc = getUserDoc('sales', newSale.id);
-  if (saleDoc) await setDoc(saleDoc, cleanFirestoreData(newSale));
+  if (saleDoc) await saleDoc.set(cleanFirestoreData(newSale));
 
   return { success: true, data: newSale };
 };
@@ -1249,8 +1246,8 @@ export const submitOnlineOrder = async (
     try {
         // Save to Shared Sales Collection
         // Because of our new Rules, this is allowed even without login!
-        const salesRef = collection(db, 'sales');
-        await addDoc(salesRef, cleanFirestoreData(saleRecord));
+        const salesRef = db.collection('sales');
+        await salesRef.add(cleanFirestoreData(saleRecord));
         
         return { success: true, message: "Order placed successfully!", data: saleRecord.invoiceId };
     } catch (e: any) {
@@ -1260,68 +1257,76 @@ export const submitOnlineOrder = async (
 };
 
 export const updateSaleStatus = async (saleId: string, status: SalesStatus): Promise<ApiResponse<SalesRecord>> => {
-  // 1. Find in Local Cache First
   let index = mockSales.findIndex(s => s.id === saleId);
-  
-  if (index === -1) {
-      // 2. Fallback: Try to fetch from Firestore if missing locally
+  let saleData = index !== -1 ? mockSales[index] : null;
+
+  // Fallback: Fetch from Firestore if not in local cache
+  if (!saleData) {
       try {
           const docRef = getUserDoc('sales', saleId);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-              const remoteSale = snap.data() as SalesRecord;
-              mockSales.unshift(remoteSale);
-              index = 0; // Now it's at the top
-          } else {
-              return { success: false, message: "Sale ID not found in database" };
+          const snap = await docRef.get();
+          if (snap.exists) {
+              saleData = snap.data() as SalesRecord;
+              mockSales.unshift(saleData);
+              index = 0;
           }
       } catch (e) {
-          console.error("Error fetching sale for update:", e);
-          return { success: false, message: "Network error finding sale" };
+          console.error("Error fetching sale:", e);
       }
   }
 
-  // 3. Perform Optimistic Update (Update Local State Immediately)
-  const previousStatus = mockSales[index].status;
+  if (!saleData || index === -1) return { success: false, message: "Sale not found" };
+
+  // STOCK DEDUCTION LOGIC: Only deduct when moving from QUOTATION to INVOICED
+  if (saleData.status === 'QUOTATION' && status === 'INVOICED') {
+      const itemsToDeduct = saleData.items;
+      
+      for (const lineItem of itemsToDeduct) {
+          // Find matching goods in stock (FIFO logic)
+          const matchingGoods = mockFinishedGoods
+              .filter(f => f.recipeName === lineItem.recipeName && f.packagingType === lineItem.packagingType && f.quantity > 0)
+              .sort((a,b) => new Date(a.datePacked).getTime() - new Date(b.datePacked).getTime());
+
+          let toDeduct = lineItem.quantity;
+          
+          // Check total availability first
+          const totalAvailable = matchingGoods.reduce((sum, item) => sum + item.quantity, 0);
+          if (totalAvailable < toDeduct) {
+              return { success: false, message: `Insufficient stock for ${lineItem.recipeName}. Available: ${totalAvailable}` };
+          }
+
+          // Perform Deduction
+          for (const stockBatch of matchingGoods) {
+              if (toDeduct <= 0) break;
+              const take = Math.min(stockBatch.quantity, toDeduct);
+              stockBatch.quantity -= take;
+              toDeduct -= take;
+              
+              const fgDoc = getUserDoc('finished_goods', stockBatch.id);
+              if (fgDoc) await fgDoc.update({ quantity: stockBatch.quantity });
+          }
+      }
+  }
+
+  // UPDATE STATUS
   mockSales[index].status = status;
-  
   const updates: any = { status };
   
-  // Set delivery date if applicable
   if ((status === 'DELIVERED' || status === 'SHIPPED') && !mockSales[index].dateDelivered) {
       const dateStr = new Date().toISOString();
       mockSales[index].dateDelivered = dateStr;
       updates.dateDelivered = dateStr;
   }
   
-  lastWriteTime = Date.now(); // Update buffer time
+  lastWriteTime = Date.now();
 
-  // 4. Sync to Firestore (Fire and Forget / Async Wait)
   try {
       const saleDoc = getUserDoc('sales', saleId);
-      if (saleDoc) {
-          await updateDoc(saleDoc, cleanFirestoreData(updates));
-          console.log(`✅ Updated Sale ${saleId} to ${status}`);
-      }
+      if (saleDoc) await saleDoc.update(cleanFirestoreData(updates));
       return { success: true, data: mockSales[index] };
   } catch (error: any) {
-      console.error("🔥 Firestore Update Failed:", error);
-      
-      // Attempt recovery: if updateDoc failed because doc doesn't exist (offline create?), try setDoc
-      if (error.code === 'not-found') {
-           try {
-               const saleDoc = getUserDoc('sales', saleId);
-               await setDoc(saleDoc, cleanFirestoreData(mockSales[index]));
-               return { success: true, data: mockSales[index] };
-           } catch (retryError) {
-               console.error("Retry save failed", retryError);
-           }
-      }
-
-      // Revert local state if server save really fails
-      mockSales[index].status = previousStatus; 
-      
-      return { success: false, message: "Database update failed: " + error.message };
+      console.error("Firestore Update Failed:", error);
+      return { success: false, message: error.message };
   }
 };
 
@@ -1331,7 +1336,7 @@ export const updateSaleStatus = async (saleId: string, status: SalesStatus): Pro
 export const getDailyProductionCosts = async (forceRemote = false): Promise<ApiResponse<DailyCostMetrics[]>> => {
   const colRef = getUserCollection('daily_costs');
   if (colRef) {
-      const snap = await getDocs(colRef);
+      const snap = await colRef.get();
       const data = snap.docs.map(d => d.data() as DailyCostMetrics);
       data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       mockDailyCosts = data;
@@ -1384,7 +1389,7 @@ export const updateDailyCost = async (id: string, updates: Partial<DailyCostMetr
         c.totalCost = c.rawMaterialCost + c.packagingCost + c.wastageCost + c.laborCost;
 
         const docRef = getUserDoc('daily_costs', id);
-        if (docRef) await updateDoc(docRef, cleanFirestoreData({ ...updates, totalCost: c.totalCost }));
+        if (docRef) await docRef.update(cleanFirestoreData({ ...updates, totalCost: c.totalCost }));
 
         return { success: true, message: "Cost updated successfully" };
     }
@@ -1421,8 +1426,8 @@ export const getMonthlyBudget = async (month: string): Promise<ApiResponse<Budge
   const docRef = getUserDoc('budgets', docId);
   if (docRef) {
       try {
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
+          const snap = await docRef.get();
+          if (snap.exists) {
               return { success: true, data: snap.data() as Budget };
           }
       } catch (e) {
@@ -1436,7 +1441,7 @@ export const setMonthlyBudget = async (budget: Budget): Promise<ApiResponse<Budg
   const docId = `BUDGET-${budget.month}`;
   const docRef = getUserDoc('budgets', docId);
   if (docRef) {
-      await setDoc(docRef, cleanFirestoreData(budget));
+      await docRef.set(cleanFirestoreData(budget));
       return { success: true, data: budget };
   }
   return { success: false, message: "Database connection failed" };
