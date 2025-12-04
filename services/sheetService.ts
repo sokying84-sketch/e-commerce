@@ -1246,8 +1246,8 @@ export const submitOnlineOrder = async (
     try {
         // Save to Shared Sales Collection
         // Because of our new Rules, this is allowed even without login!
-        const salesRef = db.collection('sales');
-        await salesRef.add(cleanFirestoreData(saleRecord));
+        const salesRef = db.collection('sales').doc(newSaleId);
+        await salesRef.set(cleanFirestoreData(saleRecord));
         
         return { success: true, message: "Order placed successfully!", data: saleRecord.invoiceId };
     } catch (e: any) {
@@ -1322,7 +1322,20 @@ export const updateSaleStatus = async (saleId: string, status: SalesStatus): Pro
 
   try {
       const saleDoc = getUserDoc('sales', saleId);
-      if (saleDoc) await saleDoc.update(cleanFirestoreData(updates));
+      // Try direct update first
+      try {
+          await saleDoc.update(cleanFirestoreData(updates));
+      } catch (e: any) {
+          // If fail (e.g. document not found by ID because it was created via Shop with random ID)
+          // Search for it
+          const q = db.collection('sales').where('id', '==', saleId);
+          const snap = await q.get();
+          if (!snap.empty) {
+              await snap.docs[0].ref.update(cleanFirestoreData(updates));
+          } else {
+              throw e;
+          }
+      }
       return { success: true, data: mockSales[index] };
   } catch (error: any) {
       console.error("Firestore Update Failed:", error);
