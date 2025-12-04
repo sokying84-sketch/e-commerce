@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { getFinishedGoods, submitOnlineOrder } from '../services/sheetService';
 import { FinishedGood } from '../types';
-import { ShoppingCart, Plus, Minus, ShoppingBag, X, CheckCircle, Store, ExternalLink } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, ShoppingBag, X, CheckCircle, Store, ExternalLink, RefreshCw } from 'lucide-react';
 
 export default function ShopPage() {
   const [goods, setGoods] = useState<FinishedGood[]>([]);
@@ -17,6 +17,10 @@ export default function ShopPage() {
 
   useEffect(() => {
     loadInventory();
+    
+    // Auto-refresh inventory every 30 seconds to keep it "Live"
+    const interval = setInterval(loadInventory, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadInventory = async () => {
@@ -24,8 +28,24 @@ export default function ShopPage() {
         // This fetches PUBLIC data (allowed by new rules)
         const res = await getFinishedGoods(true); 
         if (res.success && res.data) {
-            // Only show items with stock > 0
-            setGoods(res.data.filter(g => g.quantity > 0));
+            // 1. FILTER: Only show items with stock
+            const activeStock = res.data.filter(g => g.quantity > 0);
+
+            // 2. AGGREGATE: Group separate batches into single products
+            // This fixes the "Duplicate" issue
+            const grouped = activeStock.reduce((acc, curr) => {
+                const key = `${curr.recipeName}|${curr.packagingType}`;
+                if (!acc[key]) {
+                    // First time seeing this product: clone it
+                    acc[key] = { ...curr };
+                } else {
+                    // Already seen: just add the quantity to the existing card
+                    acc[key].quantity += curr.quantity;
+                }
+                return acc;
+            }, {} as Record<string, FinishedGood>);
+
+            setGoods(Object.values(grouped));
         }
     } catch (error) {
         console.error("Failed to load shop inventory:", error);
@@ -36,17 +56,21 @@ export default function ShopPage() {
 
   const addToCart = (product: FinishedGood) => {
     setCart(prev => {
-        const existing = prev.find(p => p.item.id === product.id);
+        // Find if we already have this PRODUCT (ignoring batch ID, matching by recipe/packaging)
+        const existing = prev.find(p => p.item.recipeName === product.recipeName && p.item.packagingType === product.packagingType);
+        
         if (existing) {
-            return prev.map(p => p.item.id === product.id ? { ...p, qty: Math.min(p.qty + 1, product.quantity) } : p);
+            // Don't let them buy more than TOTAL available stock
+            const newQty = Math.min(existing.qty + 1, product.quantity);
+            return prev.map(p => (p.item.recipeName === product.recipeName && p.item.packagingType === product.packagingType) ? { ...p, qty: newQty } : p);
         }
         return [...prev, { item: product, qty: 1 }];
     });
     setIsCartOpen(true);
   };
 
-  const removeFromCart = (id: string) => {
-      setCart(prev => prev.filter(p => p.item.id !== id));
+  const removeFromCart = (recipeName: string, packagingType: string) => {
+      setCart(prev => prev.filter(p => !(p.item.recipeName === recipeName && p.item.packagingType === packagingType)));
   };
 
   const cartTotal = cart.reduce((sum, c) => sum + (c.item.sellingPrice * c.qty), 0);
@@ -55,14 +79,11 @@ export default function ShopPage() {
       e.preventDefault();
       if (cart.length === 0) return;
       
-      // 1. Submit to Database (Internal Record)
       const res = await submitOnlineOrder(name, phone, cart);
       
       if (res.success) {
-          // 2. Generate WhatsApp Link
           const orderText = cart.map(c => `- ${c.qty}x ${c.item.recipeName} (${c.item.packagingType})`).join('%0a');
           const message = `Hi, I would like to confirm my order #${res.data}:%0a${orderText}%0a*Total: RM ${cartTotal.toFixed(2)}*%0a%0aName: ${name}`;
-          // Replace with your business number
           const whatsappUrl = `https://wa.me/60123456789?text=${message}`; 
           
           setOrderSuccess(whatsappUrl);
@@ -123,8 +144,8 @@ export default function ShopPage() {
               <div className="text-center py-20 text-slate-400">Loading fresh produce...</div>
           ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                  {goods.map(product => (
-                      <div key={product.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-shadow group">
+                  {goods.map((product, index) => (
+                      <div key={index} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-shadow group">
                           <div className="h-48 bg-slate-200 relative overflow-hidden">
                               {product.imageUrl ? (
                                   <img src={product.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={product.recipeName} />
@@ -186,7 +207,7 @@ export default function ShopPage() {
                                       <div className="flex justify-between items-center">
                                           <p className="font-bold text-green-700">RM {(item.item.sellingPrice * item.qty).toFixed(2)}</p>
                                           <div className="flex items-center bg-slate-100 rounded-lg">
-                                              <button onClick={() => removeFromCart(item.item.id)} className="p-1 px-2 text-slate-500 hover:text-red-500"><X size={14}/></button>
+                                              <button onClick={() => removeFromCart(item.item.recipeName, item.item.packagingType)} className="p-1 px-2 text-slate-500 hover:text-red-500"><X size={14}/></button>
                                               <span className="px-2 text-sm font-bold">{item.qty}</span>
                                           </div>
                                       </div>
@@ -207,7 +228,7 @@ export default function ShopPage() {
                               <input required placeholder="Your Name" className="w-full p-3 border rounded-xl" value={name} onChange={e => setName(e.target.value)} />
                               <input required placeholder="WhatsApp Number" className="w-full p-3 border rounded-xl" value={phone} onChange={e => setPhone(e.target.value)} />
                               <button className="w-full py-4 bg-green-600 text-white font-bold rounded-xl shadow-lg hover:bg-green-700 hover:shadow-xl transition-all">
-                                  Place Order
+                                  Confirm Order
                               </button>
                           </form>
                       </div>
